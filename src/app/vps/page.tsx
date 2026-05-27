@@ -14,6 +14,7 @@ import {
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { FormEvent, Suspense, useEffect, useMemo, useState } from "react";
+import { storedToken } from "@/lib/firebase";
 
 type Worker = {
   id: string;
@@ -82,9 +83,14 @@ function cls(...items: Array<string | false | null | undefined>) {
 }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = storedToken();
   const response = await fetch(`${API}${path}`, {
     ...init,
-    headers: { "content-type": "application/json", ...(init?.headers || {}) },
+    headers: {
+      "content-type": "application/json",
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+      ...(init?.headers || {}),
+    },
     cache: "no-store",
   });
   if (!response.ok) throw new Error(await response.text());

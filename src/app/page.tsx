@@ -31,6 +31,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { storedToken } from "@/lib/firebase";
 
 type GenerationType = "text_to_image" | "image_to_image" | "text_to_video" | "image_to_video";
 
@@ -205,6 +206,16 @@ type WorkerResult = {
   };
 };
 
+type AdminUser = {
+  email: string;
+  name?: string;
+  status: "approved" | "pending" | "blocked";
+  role?: string;
+  super_admin?: boolean;
+  last_seen_at?: string;
+  updated_at?: string;
+};
+
 const API = "/api/orchestrator";
 const DEFAULT_WORKER_PUBLIC_BASE = process.env.NEXT_PUBLIC_WORKER_PUBLIC_BASE || "";
 
@@ -227,9 +238,29 @@ function cls(...items: Array<string | false | null | undefined>) {
 }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = storedToken();
   const response = await fetch(`${API}${path}`, {
     ...init,
-    headers: { "content-type": "application/json", ...(init?.headers || {}) },
+    headers: {
+      "content-type": "application/json",
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+      ...(init?.headers || {}),
+    },
+    cache: "no-store",
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<T>;
+}
+
+async function adminApi<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = storedToken();
+  const response = await fetch(`/api/admin${path}`, {
+    ...init,
+    headers: {
+      "content-type": "application/json",
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+      ...(init?.headers || {}),
+    },
     cache: "no-store",
   });
   if (!response.ok) throw new Error(await response.text());
@@ -447,6 +478,7 @@ export default function Home() {
     text_to_video: [],
     image_to_video: [],
   });
+  const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -483,18 +515,20 @@ export default function Home() {
   async function refresh(silent = false) {
     if (!silent) setBusy("Refreshing");
     try {
-      const [nextWorkers, nextJobs, nextSettings, nextMetrics, nextCatalog] = await Promise.all([
+      const [nextWorkers, nextJobs, nextSettings, nextMetrics, nextCatalog, nextAdminUsers] = await Promise.all([
         api<Worker[]>("/workers"),
         api<Job[]>("/jobs?limit=50"),
         api<FlowSettings>("/flow-settings"),
         api<Metrics>("/metrics"),
         api<ModelCatalog>("/flow-models"),
+        adminApi<{ users: AdminUser[] }>("/access").then((value) => value.users).catch(() => []),
       ]);
       setWorkers(nextWorkers);
       setJobs(nextJobs);
       setFlowSettings({ ...EMPTY_SETTINGS, ...nextSettings });
       setModelCatalog(nextCatalog);
       setMetrics(nextMetrics);
+      setAdminUsers(nextAdminUsers);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load orchestrator");
@@ -606,6 +640,15 @@ export default function Home() {
     );
   }
 
+  async function updateAdminAccess(email: string, status: AdminUser["status"]) {
+    await run(`Admin ${status}`, () =>
+      adminApi("/access", {
+        method: "POST",
+        body: JSON.stringify({ email, status, role: status === "approved" ? "admin" : "viewer" }),
+      }),
+    );
+  }
+
   return (
     <main className="min-h-screen bg-[#f6f7f9] text-slate-950">
       <div className="mx-auto flex min-h-screen w-full max-w-[1500px] flex-col px-4 py-4 sm:px-6 lg:px-8">
@@ -668,6 +711,42 @@ export default function Home() {
                   Save VPS node
                 </button>
               </form>
+            </Panel>
+
+            <Panel title="Admin Access">
+              <div className="grid gap-3">
+                <div className="rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-600">
+                  Google sign-in is required. New users appear here as pending after their first login attempt.
+                </div>
+                {adminUsers.length === 0 ? (
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-500">No access records yet.</div>
+                ) : (
+                  adminUsers.map((user) => (
+                    <div key={user.email} className="rounded-lg border border-slate-200 bg-white p-3">
+                      <div className="truncate text-sm font-semibold text-slate-950">{user.email}</div>
+                      <div className="mt-1 flex flex-wrap gap-2 text-xs text-slate-500">
+                        <span className={cls("rounded-md px-2 py-0.5 font-semibold", user.status === "approved" ? "bg-emerald-50 text-emerald-700" : user.status === "blocked" ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-700")}>
+                          {user.status}
+                        </span>
+                        {user.super_admin ? <span>super admin</span> : <span>{user.role || "viewer"}</span>}
+                      </div>
+                      {!user.super_admin && (
+                        <div className="mt-3 grid grid-cols-3 gap-2">
+                          <button className="command-button h-9 justify-center" onClick={() => updateAdminAccess(user.email, "approved")} disabled={Boolean(busy)}>
+                            Approve
+                          </button>
+                          <button className="command-button h-9 justify-center" onClick={() => updateAdminAccess(user.email, "pending")} disabled={Boolean(busy)}>
+                            Pending
+                          </button>
+                          <button className="command-button h-9 justify-center text-red-700" onClick={() => updateAdminAccess(user.email, "blocked")} disabled={Boolean(busy)}>
+                            Block
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
             </Panel>
 
             <Panel title="Flow Model Policy">

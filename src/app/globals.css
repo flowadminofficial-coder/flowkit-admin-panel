@@ -64,3 +64,35 @@ input[type="checkbox"] {
 .icon-button {
   @apply inline-flex size-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 transition hover:bg-slate-50;
 }
+
+.auth-shell {
+  @apply flex min-h-screen items-center justify-center bg-slate-100 px-4 text-slate-950;
+}
+
+.auth-panel {
+  @apply grid w-full max-w-md gap-4 rounded-xl border border-slate-200 bg-white p-6 shadow-sm;
+}
+
+.auth-panel h1 {
+  @apply text-2xl font-semibold;
+}
+
+.auth-panel p {
+  @apply text-sm leading-6 text-slate-600;
+}
+
+.auth-error {
+  @apply rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700;
+}
+
+.auth-user {
+  @apply rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700;
+}
+
+.auth-bar {
+  @apply sticky top-0 z-50 flex min-h-12 items-center justify-end gap-3 border-b border-slate-200 bg-white/95 px-4 text-sm text-slate-600 backdrop-blur;
+}
+
+.auth-bar strong {
+  @apply rounded-md bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700;
+}
