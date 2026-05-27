@@ -1,6 +1,7 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
 
 const DEFAULT_ORCHESTRATOR_URL = "https://flowkit-global-orchestrator.onrender.com";
+const DEFAULT_FIREBASE_PROJECT_ID = "veo3-57e3e";
 const SUPER_ADMIN_EMAIL = "runjawon@gmail.com";
 const allowedStatuses = new Set(["approved", "pending", "blocked"]);
 
@@ -30,7 +31,7 @@ let jwks;
 async function verifyFirebaseUser(request, env) {
   const token = tokenFromRequest(request);
   if (!token) throw new Error("Missing Firebase bearer token.");
-  const projectId = env.FIREBASE_PROJECT_ID;
+  const projectId = env.FIREBASE_PROJECT_ID || DEFAULT_FIREBASE_PROJECT_ID;
   if (!projectId) throw new Error("FIREBASE_PROJECT_ID is not configured.");
   jwks ||= createRemoteJWKSet(new URL("https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com"));
   const { payload } = await jwtVerify(token, jwks, {

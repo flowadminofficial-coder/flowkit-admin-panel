@@ -11,10 +11,10 @@ import {
 } from "firebase/auth";
 
 const firebaseConfig = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
+  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "AIzaSyBlLGy7r5Fo_6gPGD2JY-GDl_QsQZt_q8w",
+  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || "veo3-57e3e.firebaseapp.com",
+  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "veo3-57e3e",
+  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID || "1:500544412148:web:6b2d9f77dc02eac818c1a1",
 };
 
 export const firebaseReady = Boolean(
