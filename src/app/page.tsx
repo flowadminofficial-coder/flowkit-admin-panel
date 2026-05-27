@@ -824,7 +824,7 @@ function WorkerCard({
           </div>
           <p className="mt-1 break-all text-xs text-slate-500">{worker.base_url}</p>
         </button>
-        <Link className="command-button shrink-0" href={`/vps/${encodeURIComponent(worker.id)}`}>
+        <Link className="command-button shrink-0" href={`/vps?id=${encodeURIComponent(worker.id)}`}>
           <Server size={16} />
           Open VPS page
         </Link>

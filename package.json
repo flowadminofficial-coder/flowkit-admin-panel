@@ -1,12 +1,12 @@
 {
-  "name": "flowkit-admin-panel",
+  "name": "flow-orchestrator-frontend",
   "version": "0.1.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "cf:build": "npx --yes @cloudflare/next-on-pages@1",
-    "cf:deploy": "npm run cf:build && npx --yes wrangler pages deploy .vercel/output/static --project-name flowkit-admin-panel",
+    "cf:build": "next build",
+    "cf:deploy": "npm run cf:build && npx --yes wrangler pages deploy out --project-name flowkit-admin-panel",
     "start": "next start",
     "lint": "eslint"
   },

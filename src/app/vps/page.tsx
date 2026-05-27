@@ -12,8 +12,8 @@ import {
   Trash2,
 } from "lucide-react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { FormEvent, Suspense, useEffect, useMemo, useState } from "react";
 
 type Worker = {
   id: string;
@@ -91,9 +91,9 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export default function VpsPage() {
-  const params = useParams<{ id: string }>();
-  const vpsId = decodeURIComponent(params.id);
+function VpsPageContent() {
+  const searchParams = useSearchParams();
+  const vpsId = searchParams.get("id") || "";
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [newAccountId, setNewAccountId] = useState("acc-1");
@@ -286,6 +286,14 @@ export default function VpsPage() {
         </div>
       </div>
     </main>
+  );
+}
+
+export default function VpsPage() {
+  return (
+    <Suspense fallback={<main className="min-h-screen bg-slate-50 p-8 text-slate-950">Loading VPS...</main>}>
+      <VpsPageContent />
+    </Suspense>
   );
 }
 
