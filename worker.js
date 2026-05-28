@@ -260,8 +260,8 @@ export default {
   async fetch(request, env) {
     try {
       const url = new URL(request.url);
-      if (url.pathname.startsWith("/api/admin")) return handleAdminApi(request, env);
-      if (url.pathname.startsWith("/api/orchestrator")) return proxyOrchestrator(request, env);
+      if (url.pathname.startsWith("/api/admin")) return await handleAdminApi(request, env);
+      if (url.pathname.startsWith("/api/orchestrator")) return await proxyOrchestrator(request, env);
       return env.ASSETS.fetch(request);
     } catch (error) {
       return json({ error: error.message || "Worker error" }, 500);
