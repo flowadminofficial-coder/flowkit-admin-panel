@@ -1,6 +1,7 @@
 const DEFAULT_ORCHESTRATOR_URL = "https://flowkit-global-orchestrator.onrender.com";
 const DEFAULT_ADMIN_EMAIL = "runjawon@gmail.com";
 const SESSION_TTL_SECONDS = 60 * 60 * 12;
+const PASSWORD_HASH_ITERATIONS = 100000;
 
 const encoder = new TextEncoder();
 
@@ -68,7 +69,7 @@ async function hashPassword(password, saltBase64) {
   const salt = saltBase64 ? fromBase64Url(saltBase64) : crypto.getRandomValues(new Uint8Array(16));
   const key = await crypto.subtle.importKey("raw", encoder.encode(password), "PBKDF2", false, ["deriveBits"]);
   const bits = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", salt, iterations: 120000, hash: "SHA-256" },
+    { name: "PBKDF2", salt, iterations: PASSWORD_HASH_ITERATIONS, hash: "SHA-256" },
     key,
     256,
   );
