@@ -233,10 +233,12 @@ async function handleLogin(request, env) {
       password_salt: passwordHash.salt,
       created_at: new Date().toISOString(),
     };
-    try {
-      await saveUser(env, record);
-    } catch (error) {
-      return json({ error: `Unable to save super admin account: ${error.message}` }, 500);
+    if (env.ADMIN_USERS) {
+      try {
+        await saveUser(env, record);
+      } catch (error) {
+        return json({ error: `Unable to save super admin account: ${error.message}` }, 500);
+      }
     }
   }
 
