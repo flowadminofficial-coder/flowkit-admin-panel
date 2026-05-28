@@ -216,7 +216,7 @@ async function handleLogin(request, env) {
   } catch (error) {
     return json({ error: `Unable to read admin user store: ${error.message}` }, 500);
   }
-  if (!record && email === superAdminEmail && env.ADMIN_PASSWORD && password === env.ADMIN_PASSWORD) {
+  if (email === superAdminEmail && env.ADMIN_PASSWORD && password === env.ADMIN_PASSWORD) {
     let passwordHash;
     try {
       passwordHash = await hashPassword(password);
@@ -224,14 +224,16 @@ async function handleLogin(request, env) {
       return json({ error: `Unable to hash super admin password: ${error.message}` }, 500);
     }
     record = {
+      ...(record || {}),
       email,
-      name: "Super admin",
+      name: record?.name || "Super admin",
       status: "approved",
       role: "super_admin",
       super_admin: true,
       password_hash: passwordHash.hash,
       password_salt: passwordHash.salt,
-      created_at: new Date().toISOString(),
+      created_at: record?.created_at || new Date().toISOString(),
+      updated_at: new Date().toISOString(),
     };
     if (env.ADMIN_USERS) {
       try {
