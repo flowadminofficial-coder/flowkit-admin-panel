@@ -1,9 +1,8 @@
-import { createRemoteJWKSet, jwtVerify } from "jose";
-
 const DEFAULT_ORCHESTRATOR_URL = "https://flowkit-global-orchestrator.onrender.com";
-const DEFAULT_FIREBASE_PROJECT_ID = "veo3-57e3e";
-const SUPER_ADMIN_EMAIL = "runjawon@gmail.com";
-const allowedStatuses = new Set(["approved", "pending", "blocked"]);
+const DEFAULT_ADMIN_EMAIL = "runjawon@gmail.com";
+const SESSION_TTL_SECONDS = 60 * 60 * 12;
+
+const encoder = new TextEncoder();
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -26,74 +25,92 @@ function tokenFromRequest(request) {
   return match?.[1] || null;
 }
 
-let jwks;
-
-async function verifyFirebaseUser(request, env) {
-  const token = tokenFromRequest(request);
-  if (!token) throw new Error("Missing Firebase bearer token.");
-  const projectId = env.FIREBASE_PROJECT_ID || DEFAULT_FIREBASE_PROJECT_ID;
-  if (!projectId) throw new Error("FIREBASE_PROJECT_ID is not configured.");
-  jwks ||= createRemoteJWKSet(new URL("https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com"));
-  const { payload } = await jwtVerify(token, jwks, {
-    issuer: `https://securetoken.google.com/${projectId}`,
-    audience: projectId,
-  });
-  const email = normalizeEmail(payload.email);
-  if (!email || payload.email_verified === false) throw new Error("Google email is not verified.");
-  return {
-    uid: payload.sub,
-    email,
-    name: payload.name || "",
-    picture: payload.picture || "",
-  };
+function base64Url(bytes) {
+  const binary = String.fromCharCode(...new Uint8Array(bytes));
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
 }
 
-async function getAccessRecord(env, user) {
-  const superAdminEmail = normalizeEmail(env.SUPER_ADMIN_EMAIL || SUPER_ADMIN_EMAIL);
-  const isSuperAdmin = user.email === superAdminEmail;
-  const now = new Date().toISOString();
-  const fallbackRecord = {
-    email: user.email,
-    name: user.name,
-    status: isSuperAdmin ? "approved" : "pending",
-    role: isSuperAdmin ? "super_admin" : "viewer",
-    super_admin: isSuperAdmin,
-    last_seen_at: now,
-  };
+function fromBase64Url(value) {
+  const padded = value.replaceAll("-", "+").replaceAll("_", "/").padEnd(Math.ceil(value.length / 4) * 4, "=");
+  const binary = atob(padded);
+  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
+}
 
-  if (!env.ADMIN_USERS) return fallbackRecord;
+async function hmacKey(secret) {
+  return crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
+}
 
-  const key = userKey(user.email);
-  const existing = await env.ADMIN_USERS.get(key, "json");
-  const record = {
-    ...fallbackRecord,
-    ...(existing || {}),
-    email: user.email,
-    name: user.name || existing?.name || "",
-    super_admin: isSuperAdmin,
-    status: isSuperAdmin ? "approved" : existing?.status || fallbackRecord.status,
-    role: isSuperAdmin ? "super_admin" : existing?.role || fallbackRecord.role,
-    last_seen_at: now,
-  };
-  await env.ADMIN_USERS.put(key, JSON.stringify(record));
-  return record;
+async function signSession(payload, env) {
+  const secret = env.SESSION_SECRET || env.ORCHESTRATOR_API_KEY;
+  if (!secret) throw new Error("SESSION_SECRET is not configured.");
+  const body = base64Url(encoder.encode(JSON.stringify(payload)));
+  const signature = await crypto.subtle.sign("HMAC", await hmacKey(secret), encoder.encode(body));
+  return `${body}.${base64Url(signature)}`;
+}
+
+async function verifySessionToken(token, env) {
+  const secret = env.SESSION_SECRET || env.ORCHESTRATOR_API_KEY;
+  if (!secret) throw new Error("SESSION_SECRET is not configured.");
+  const [body, signature] = String(token || "").split(".");
+  if (!body || !signature) throw new Error("Invalid admin session.");
+  const valid = await crypto.subtle.verify("HMAC", await hmacKey(secret), fromBase64Url(signature), encoder.encode(body));
+  if (!valid) throw new Error("Invalid admin session.");
+  const payload = JSON.parse(new TextDecoder().decode(fromBase64Url(body)));
+  if (!payload.exp || Date.now() > payload.exp * 1000) throw new Error("Admin session expired.");
+  return payload;
+}
+
+async function hashPassword(password, saltBase64) {
+  const salt = saltBase64 ? fromBase64Url(saltBase64) : crypto.getRandomValues(new Uint8Array(16));
+  const key = await crypto.subtle.importKey("raw", encoder.encode(password), "PBKDF2", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", salt, iterations: 120000, hash: "SHA-256" },
+    key,
+    256,
+  );
+  return { salt: base64Url(salt), hash: base64Url(bits) };
+}
+
+async function verifyPassword(password, record) {
+  if (!record?.password_salt || !record?.password_hash) return false;
+  const next = await hashPassword(password, record.password_salt);
+  return next.hash === record.password_hash;
+}
+
+async function getUser(env, email) {
+  if (!env.ADMIN_USERS) return null;
+  return env.ADMIN_USERS.get(userKey(email), "json");
+}
+
+async function saveUser(env, record) {
+  if (!env.ADMIN_USERS) throw new Error("ADMIN_USERS KV binding is not configured.");
+  await env.ADMIN_USERS.put(userKey(record.email), JSON.stringify(record));
+}
+
+async function getSession(request, env) {
+  const token = tokenFromRequest(request);
+  if (!token) throw new Error("Missing admin session.");
+  const session = await verifySessionToken(token, env);
+  const email = normalizeEmail(session.email);
+  const superAdminEmail = normalizeEmail(env.ADMIN_EMAIL || DEFAULT_ADMIN_EMAIL);
+  if (email === superAdminEmail) return { email, role: "super_admin", super_admin: true };
+  const record = await getUser(env, email);
+  if (!record || record.status !== "approved") throw new Error("Admin account is not approved.");
+  return { email, role: record.role || "admin", super_admin: false };
 }
 
 async function requireApprovedAdmin(request, env) {
-  const user = await verifyFirebaseUser(request, env);
-  const access = await getAccessRecord(env, user);
-  if (access.status !== "approved") {
-    return { user, access, response: json(access, 403) };
+  try {
+    return { session: await getSession(request, env) };
+  } catch (error) {
+    return { response: json({ error: error.message || "Unauthorized" }, 401) };
   }
-  return { user, access };
 }
 
 async function requireSuperAdmin(request, env) {
   const auth = await requireApprovedAdmin(request, env);
   if (auth.response) return auth;
-  if (!auth.access.super_admin) {
-    return { ...auth, response: json({ error: "Super admin access required." }, 403) };
-  }
+  if (!auth.session.super_admin) return { ...auth, response: json({ error: "Super admin access required." }, 403) };
   return auth;
 }
 
@@ -125,19 +142,79 @@ async function listAccessRecords(env) {
   if (!env.ADMIN_USERS) return [];
   const entries = await env.ADMIN_USERS.list({ prefix: "user:" });
   const records = await Promise.all(entries.keys.map((item) => env.ADMIN_USERS.get(item.name, "json")));
-  return records.filter(Boolean).sort((a, b) => a.email.localeCompare(b.email));
+  return records
+    .filter(Boolean)
+    .map(({ password_hash, password_salt, ...record }) => record)
+    .sort((a, b) => a.email.localeCompare(b.email));
+}
+
+async function handleSignup(request, env) {
+  const body = await request.json();
+  const email = normalizeEmail(body.email);
+  const password = String(body.password || "");
+  const name = String(body.name || "").trim();
+  if (!email || password.length < 8) return json({ error: "Email and 8+ character password are required." }, 400);
+  const superAdminEmail = normalizeEmail(env.ADMIN_EMAIL || DEFAULT_ADMIN_EMAIL);
+  const existing = await getUser(env, email);
+  if (existing) return json({ status: existing.status, message: "Account request already exists." });
+  const passwordHash = await hashPassword(password);
+  const record = {
+    email,
+    name,
+    status: email === superAdminEmail ? "approved" : "pending",
+    role: email === superAdminEmail ? "super_admin" : "admin",
+    super_admin: email === superAdminEmail,
+    password_hash: passwordHash.hash,
+    password_salt: passwordHash.salt,
+    created_at: new Date().toISOString(),
+  };
+  await saveUser(env, record);
+  return json({
+    status: record.status,
+    message: record.status === "approved" ? "Super admin account created. You can sign in now." : "Signup request saved. Wait for admin approval.",
+  });
+}
+
+async function handleLogin(request, env) {
+  const body = await request.json();
+  const email = normalizeEmail(body.email);
+  const password = String(body.password || "");
+  const superAdminEmail = normalizeEmail(env.ADMIN_EMAIL || DEFAULT_ADMIN_EMAIL);
+
+  let record = await getUser(env, email);
+  if (!record && email === superAdminEmail && env.ADMIN_PASSWORD && password === env.ADMIN_PASSWORD) {
+    const passwordHash = await hashPassword(password);
+    record = {
+      email,
+      name: "Super admin",
+      status: "approved",
+      role: "super_admin",
+      super_admin: true,
+      password_hash: passwordHash.hash,
+      password_salt: passwordHash.salt,
+      created_at: new Date().toISOString(),
+    };
+    await saveUser(env, record);
+  }
+
+  if (!record || !(await verifyPassword(password, record))) return json({ error: "Invalid email or password." }, 401);
+  if (record.status !== "approved") return json({ error: `Account is ${record.status}.` }, 403);
+
+  const exp = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS;
+  const user = { email: record.email, role: record.role || "admin", super_admin: Boolean(record.super_admin), expires_at: exp };
+  const token = await signSession({ ...user, exp }, env);
+  return json({ token, user });
 }
 
 async function handleAdminApi(request, env) {
   const url = new URL(request.url);
+  if (url.pathname === "/api/admin/signup" && request.method === "POST") return handleSignup(request, env);
+  if (url.pathname === "/api/admin/login" && request.method === "POST") return handleLogin(request, env);
+
   if (url.pathname === "/api/admin/me") {
-    try {
-      const user = await verifyFirebaseUser(request, env);
-      const access = await getAccessRecord(env, user);
-      return json(access, access.status === "approved" ? 200 : 403);
-    } catch (error) {
-      return json({ status: "unauthenticated", error: error.message }, 401);
-    }
+    const auth = await requireApprovedAdmin(request, env);
+    if (auth.response) return auth.response;
+    return json(auth.session);
   }
 
   if (url.pathname === "/api/admin/access" && request.method === "GET") {
@@ -149,27 +226,27 @@ async function handleAdminApi(request, env) {
   if (url.pathname === "/api/admin/access" && request.method === "POST") {
     const auth = await requireSuperAdmin(request, env);
     if (auth.response) return auth.response;
-    if (!env.ADMIN_USERS) return json({ error: "ADMIN_USERS KV binding is not configured." }, 500);
     const body = await request.json();
     const email = normalizeEmail(body.email);
     const status = String(body.status || "pending").toLowerCase();
-    if (!email || !allowedStatuses.has(status)) return json({ error: "Invalid access update." }, 400);
-    const existing = (await env.ADMIN_USERS.get(userKey(email), "json")) || { email };
+    if (!email || !["approved", "pending", "blocked"].includes(status)) return json({ error: "Invalid access update." }, 400);
+    const existing = (await getUser(env, email)) || { email, created_at: new Date().toISOString() };
     const record = {
       ...existing,
       email,
       status,
-      role: body.role || existing.role || "viewer",
-      super_admin: email === normalizeEmail(env.SUPER_ADMIN_EMAIL || SUPER_ADMIN_EMAIL),
+      role: body.role || existing.role || "admin",
       updated_at: new Date().toISOString(),
-      updated_by: auth.user.email,
+      updated_by: auth.session.email,
     };
-    if (record.super_admin) {
+    if (email === normalizeEmail(env.ADMIN_EMAIL || DEFAULT_ADMIN_EMAIL)) {
       record.status = "approved";
       record.role = "super_admin";
+      record.super_admin = true;
     }
-    await env.ADMIN_USERS.put(userKey(email), JSON.stringify(record));
-    return json(record);
+    await saveUser(env, record);
+    const { password_hash, password_salt, ...safeRecord } = record;
+    return json(safeRecord);
   }
 
   return json({ error: "Not found" }, 404);
@@ -178,16 +255,8 @@ async function handleAdminApi(request, env) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (url.pathname.startsWith("/api/admin")) {
-      return handleAdminApi(request, env);
-    }
-    if (url.pathname.startsWith("/api/orchestrator")) {
-      try {
-        return await proxyOrchestrator(request, env);
-      } catch (error) {
-        return json({ error: error.message || "Unauthorized" }, 401);
-      }
-    }
+    if (url.pathname.startsWith("/api/admin")) return handleAdminApi(request, env);
+    if (url.pathname.startsWith("/api/orchestrator")) return proxyOrchestrator(request, env);
     return env.ASSETS.fetch(request);
   },
 };

@@ -1,71 +1,57 @@
 "use client";
 
-import { ShieldCheck, LogOut, UserCheck } from "lucide-react";
-import { ReactNode, useEffect, useState } from "react";
+import { LogOut, ShieldCheck, UserCheck } from "lucide-react";
+import { FormEvent, ReactNode, useEffect, useState } from "react";
 import {
-  firebaseReady,
-  getFreshToken,
-  signInWithGoogle,
-  signOutAdmin,
-  watchAuth,
-} from "@/lib/firebase";
-import type { User } from "firebase/auth";
-
-type AccessStatus = {
-  email?: string;
-  name?: string;
-  role?: string;
-  status: "approved" | "pending" | "blocked" | "unauthenticated";
-  super_admin?: boolean;
-};
-
-async function fetchAccessStatus(token: string): Promise<AccessStatus> {
-  const response = await fetch("/api/admin/me", {
-    headers: { authorization: `Bearer ${token}` },
-    cache: "no-store",
-  });
-  if (response.status === 403) return response.json() as Promise<AccessStatus>;
-  if (!response.ok) throw new Error(await response.text());
-  return response.json() as Promise<AccessStatus>;
-}
+  AdminSession,
+  clearToken,
+  currentAdminSession,
+  loginWithPassword,
+  signupWithPassword,
+} from "@/lib/adminAuth";
 
 export function AuthGate({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [access, setAccess] = useState<AccessStatus | null>(null);
+  const [session, setSession] = useState<AdminSession | null>(null);
   const [loading, setLoading] = useState(true);
+  const [mode, setMode] = useState<"login" | "signup">("login");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    return watchAuth(async (nextUser) => {
-      setUser(nextUser);
-      setAccess(null);
-      setError(null);
-      if (!nextUser) {
-        setLoading(false);
-        return;
-      }
-      try {
-        const token = await getFreshToken(nextUser);
-        if (!token) throw new Error("Missing Firebase token.");
-        setAccess(await fetchAccessStatus(token));
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Unable to verify admin access.");
-      } finally {
-        setLoading(false);
-      }
-    });
+    currentAdminSession()
+      .then(setSession)
+      .finally(() => setLoading(false));
   }, []);
 
-  if (!firebaseReady) {
-    return (
-      <main className="auth-shell">
-        <section className="auth-panel">
-          <ShieldCheck size={34} />
-          <h1>Firebase auth is not configured</h1>
-          <p>Add the Firebase public config variables in Cloudflare, then redeploy the admin Worker.</p>
-        </section>
-      </main>
-    );
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      if (mode === "signup") {
+        const result = await signupWithPassword(email, password, name);
+        setNotice(result.message || "Signup request saved. Wait for admin approval.");
+        setMode("login");
+        setPassword("");
+        return;
+      }
+      setSession(await loginWithPassword(email, password));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Authentication failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function logout() {
+    clearToken();
+    setSession(null);
+    setPassword("");
   }
 
   if (loading) {
@@ -73,47 +59,56 @@ export function AuthGate({ children }: { children: ReactNode }) {
       <main className="auth-shell">
         <section className="auth-panel">
           <ShieldCheck size={34} />
-          <h1>Checking admin access</h1>
-          <p>Verifying your Google session with Firebase.</p>
+          <h1>Checking admin session</h1>
+          <p>Verifying your local admin session.</p>
         </section>
       </main>
     );
   }
 
-  if (!user) {
+  if (!session) {
     return (
       <main className="auth-shell">
-        <section className="auth-panel">
+        <form className="auth-panel" onSubmit={submit}>
           <ShieldCheck size={34} />
-          <h1>FlowKit Admin</h1>
-          <p>Sign in with an approved Google account to manage workers, queues, and Flow settings.</p>
-          {error ? <div className="auth-error">{error}</div> : null}
-          <button className="primary-button w-full" onClick={() => signInWithGoogle().catch((err) => setError(err.message))}>
-            <UserCheck size={18} />
-            Sign in with Google
-          </button>
-        </section>
-      </main>
-    );
-  }
-
-  if (access?.status !== "approved") {
-    return (
-      <main className="auth-shell">
-        <section className="auth-panel">
-          <ShieldCheck size={34} />
-          <h1>{access?.status === "blocked" ? "Access blocked" : "Access pending"}</h1>
+          <h1>{mode === "login" ? "FlowKit Admin" : "Request admin access"}</h1>
           <p>
-            {access?.status === "blocked"
-              ? "This Google account is blocked from the admin panel."
-              : "Your login request was recorded. A super admin must approve this account before access is granted."}
+            {mode === "login"
+              ? "Sign in with your approved admin email and password."
+              : "Create an account request. A super admin must approve it before you can use the panel."}
           </p>
-          <div className="auth-user">{user.email}</div>
-          <button className="command-button w-full justify-center" onClick={() => signOutAdmin()}>
-            <LogOut size={16} />
-            Sign out
+          {mode === "signup" && (
+            <label className="grid gap-1 text-sm font-medium text-slate-700">
+              Name
+              <input className="input" value={name} onChange={(event) => setName(event.target.value)} placeholder="Your name" />
+            </label>
+          )}
+          <label className="grid gap-1 text-sm font-medium text-slate-700">
+            Email
+            <input className="input" type="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
+          </label>
+          <label className="grid gap-1 text-sm font-medium text-slate-700">
+            Password
+            <input className="input" type="password" value={password} onChange={(event) => setPassword(event.target.value)} required minLength={8} />
+          </label>
+          {notice ? <div className="auth-success">{notice}</div> : null}
+          {error ? <div className="auth-error">{error}</div> : null}
+          <button className="primary-button w-full" disabled={busy}>
+            <UserCheck size={18} />
+            {mode === "login" ? "Sign in" : "Request access"}
           </button>
-        </section>
+          <button
+            className="command-button w-full justify-center"
+            type="button"
+            onClick={() => {
+              setMode(mode === "login" ? "signup" : "login");
+              setError(null);
+              setNotice(null);
+            }}
+          >
+            {mode === "login" ? "Create access request" : "Back to sign in"}
+          </button>
+        </form>
       </main>
     );
   }
@@ -121,9 +116,9 @@ export function AuthGate({ children }: { children: ReactNode }) {
   return (
     <>
       <div className="auth-bar">
-        <span>{user.email}</span>
-        {access.super_admin ? <strong>Super admin</strong> : <strong>{access.role || "Admin"}</strong>}
-        <button className="command-button h-8" onClick={() => signOutAdmin()}>
+        <span>{session.email}</span>
+        <strong>{session.role === "super_admin" ? "Super admin" : session.role || "Admin"}</strong>
+        <button className="command-button h-8" onClick={logout}>
           <LogOut size={15} />
           Sign out
         </button>

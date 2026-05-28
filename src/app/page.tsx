@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import {
   Activity,
@@ -31,7 +31,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { storedToken } from "@/lib/firebase";
+import { storedToken } from "@/lib/adminAuth";
 
 type GenerationType = "text_to_image" | "image_to_image" | "text_to_video" | "image_to_video";
 
@@ -716,7 +716,7 @@ export default function Home() {
             <Panel title="Admin Access">
               <div className="grid gap-3">
                 <div className="rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-600">
-                  Google sign-in is required. New users appear here as pending after their first login attempt.
+                  Email/password sign-in is required. New users appear here as pending after signup.
                 </div>
                 {adminUsers.length === 0 ? (
                   <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-500">No access records yet.</div>
