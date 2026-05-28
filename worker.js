@@ -26,7 +26,11 @@ function tokenFromRequest(request) {
 }
 
 function base64Url(bytes) {
-  const binary = String.fromCharCode(...new Uint8Array(bytes));
+  const view = new Uint8Array(bytes);
+  let binary = "";
+  for (let i = 0; i < view.length; i += 0x8000) {
+    binary += String.fromCharCode(...view.subarray(i, i + 0x8000));
+  }
   return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
 }
 
@@ -254,9 +258,13 @@ async function handleAdminApi(request, env) {
 
 export default {
   async fetch(request, env) {
-    const url = new URL(request.url);
-    if (url.pathname.startsWith("/api/admin")) return handleAdminApi(request, env);
-    if (url.pathname.startsWith("/api/orchestrator")) return proxyOrchestrator(request, env);
-    return env.ASSETS.fetch(request);
+    try {
+      const url = new URL(request.url);
+      if (url.pathname.startsWith("/api/admin")) return handleAdminApi(request, env);
+      if (url.pathname.startsWith("/api/orchestrator")) return proxyOrchestrator(request, env);
+      return env.ASSETS.fetch(request);
+    } catch (error) {
+      return json({ error: error.message || "Worker error" }, 500);
+    }
   },
 };
