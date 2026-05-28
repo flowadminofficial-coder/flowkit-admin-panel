@@ -154,15 +154,30 @@ async function listAccessRecords(env) {
 }
 
 async function handleSignup(request, env) {
-  const body = await request.json();
+  let body;
+  try {
+    body = await request.json();
+  } catch (error) {
+    return json({ error: `Invalid signup JSON: ${error.message}` }, 400);
+  }
   const email = normalizeEmail(body.email);
   const password = String(body.password || "");
   const name = String(body.name || "").trim();
   if (!email || password.length < 8) return json({ error: "Email and 8+ character password are required." }, 400);
   const superAdminEmail = normalizeEmail(env.ADMIN_EMAIL || DEFAULT_ADMIN_EMAIL);
-  const existing = await getUser(env, email);
+  let existing;
+  try {
+    existing = await getUser(env, email);
+  } catch (error) {
+    return json({ error: `Unable to read admin user store: ${error.message}` }, 500);
+  }
   if (existing) return json({ status: existing.status, message: "Account request already exists." });
-  const passwordHash = await hashPassword(password);
+  let passwordHash;
+  try {
+    passwordHash = await hashPassword(password);
+  } catch (error) {
+    return json({ error: `Unable to hash password: ${error.message}` }, 500);
+  }
   const record = {
     email,
     name,
@@ -173,7 +188,11 @@ async function handleSignup(request, env) {
     password_salt: passwordHash.salt,
     created_at: new Date().toISOString(),
   };
-  await saveUser(env, record);
+  try {
+    await saveUser(env, record);
+  } catch (error) {
+    return json({ error: `Unable to save admin user: ${error.message}` }, 500);
+  }
   return json({
     status: record.status,
     message: record.status === "approved" ? "Super admin account created. You can sign in now." : "Signup request saved. Wait for admin approval.",
@@ -181,14 +200,29 @@ async function handleSignup(request, env) {
 }
 
 async function handleLogin(request, env) {
-  const body = await request.json();
+  let body;
+  try {
+    body = await request.json();
+  } catch (error) {
+    return json({ error: `Invalid login JSON: ${error.message}` }, 400);
+  }
   const email = normalizeEmail(body.email);
   const password = String(body.password || "");
   const superAdminEmail = normalizeEmail(env.ADMIN_EMAIL || DEFAULT_ADMIN_EMAIL);
 
-  let record = await getUser(env, email);
+  let record;
+  try {
+    record = await getUser(env, email);
+  } catch (error) {
+    return json({ error: `Unable to read admin user store: ${error.message}` }, 500);
+  }
   if (!record && email === superAdminEmail && env.ADMIN_PASSWORD && password === env.ADMIN_PASSWORD) {
-    const passwordHash = await hashPassword(password);
+    let passwordHash;
+    try {
+      passwordHash = await hashPassword(password);
+    } catch (error) {
+      return json({ error: `Unable to hash super admin password: ${error.message}` }, 500);
+    }
     record = {
       email,
       name: "Super admin",
@@ -199,20 +233,45 @@ async function handleLogin(request, env) {
       password_salt: passwordHash.salt,
       created_at: new Date().toISOString(),
     };
-    await saveUser(env, record);
+    try {
+      await saveUser(env, record);
+    } catch (error) {
+      return json({ error: `Unable to save super admin account: ${error.message}` }, 500);
+    }
   }
 
-  if (!record || !(await verifyPassword(password, record))) return json({ error: "Invalid email or password." }, 401);
+  let passwordOk = false;
+  try {
+    passwordOk = Boolean(record && (await verifyPassword(password, record)));
+  } catch (error) {
+    return json({ error: `Unable to verify password: ${error.message}` }, 500);
+  }
+  if (!record || !passwordOk) return json({ error: "Invalid email or password." }, 401);
   if (record.status !== "approved") return json({ error: `Account is ${record.status}.` }, 403);
 
   const exp = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS;
   const user = { email: record.email, role: record.role || "admin", super_admin: Boolean(record.super_admin), expires_at: exp };
-  const token = await signSession({ ...user, exp }, env);
+  let token;
+  try {
+    token = await signSession({ ...user, exp }, env);
+  } catch (error) {
+    return json({ error: `Unable to sign admin session: ${error.message}` }, 500);
+  }
   return json({ token, user });
 }
 
 async function handleAdminApi(request, env) {
   const url = new URL(request.url);
+  if (url.pathname === "/api/admin/diagnostics") {
+    return json({
+      ok: true,
+      has_admin_users_binding: Boolean(env.ADMIN_USERS),
+      has_admin_email: Boolean(env.ADMIN_EMAIL || DEFAULT_ADMIN_EMAIL),
+      has_admin_password: Boolean(env.ADMIN_PASSWORD),
+      has_session_secret: Boolean(env.SESSION_SECRET || env.ORCHESTRATOR_API_KEY),
+      has_orchestrator_api_key: Boolean(env.ORCHESTRATOR_API_KEY),
+    });
+  }
   if (url.pathname === "/api/admin/signup" && request.method === "POST") return handleSignup(request, env);
   if (url.pathname === "/api/admin/login" && request.method === "POST") return handleLogin(request, env);
 
