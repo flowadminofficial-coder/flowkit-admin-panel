@@ -82,6 +82,16 @@ async function verifyPassword(password, record) {
   return next.hash === record.password_hash;
 }
 
+async function setRecordPassword(record, password) {
+  const passwordHash = await hashPassword(password);
+  return {
+    ...record,
+    password_hash: passwordHash.hash,
+    password_salt: passwordHash.salt,
+    updated_at: new Date().toISOString(),
+  };
+}
+
 async function getUser(env, email) {
   if (!env.ADMIN_USERS) return null;
   return env.ADMIN_USERS.get(userKey(email), "json");
@@ -279,6 +289,20 @@ async function handleAdminApi(request, env) {
   if (url.pathname === "/api/admin/signup" && request.method === "POST") return handleSignup(request, env);
   if (url.pathname === "/api/admin/login" && request.method === "POST") return handleLogin(request, env);
 
+  if (url.pathname === "/api/admin/change-password" && request.method === "POST") {
+    const auth = await requireApprovedAdmin(request, env);
+    if (auth.response) return auth.response;
+    if (!env.ADMIN_USERS) return json({ error: "ADMIN_USERS KV binding is not configured." }, 500);
+    const body = await request.json();
+    const currentPassword = String(body.current_password || "");
+    const newPassword = String(body.new_password || "");
+    if (newPassword.length < 8) return json({ error: "New password must be at least 8 characters." }, 400);
+    const record = await getUser(env, auth.session.email);
+    if (!record || !(await verifyPassword(currentPassword, record))) return json({ error: "Current password is incorrect." }, 401);
+    await saveUser(env, await setRecordPassword(record, newPassword));
+    return json({ ok: true, message: "Password changed." });
+  }
+
   if (url.pathname === "/api/admin/me") {
     const auth = await requireApprovedAdmin(request, env);
     if (auth.response) return auth.response;
@@ -312,6 +336,23 @@ async function handleAdminApi(request, env) {
       record.role = "super_admin";
       record.super_admin = true;
     }
+    await saveUser(env, record);
+    const { password_hash, password_salt, ...safeRecord } = record;
+    return json(safeRecord);
+  }
+
+  if (url.pathname === "/api/admin/access/reset-password" && request.method === "POST") {
+    const auth = await requireSuperAdmin(request, env);
+    if (auth.response) return auth.response;
+    if (!env.ADMIN_USERS) return json({ error: "ADMIN_USERS KV binding is not configured." }, 500);
+    const body = await request.json();
+    const email = normalizeEmail(body.email);
+    const password = String(body.password || "");
+    if (!email || password.length < 8) return json({ error: "Email and 8+ character password are required." }, 400);
+    const existing = await getUser(env, email);
+    if (!existing) return json({ error: "Admin user not found." }, 404);
+    const record = await setRecordPassword(existing, password);
+    record.updated_by = auth.session.email;
     await saveUser(env, record);
     const { password_hash, password_salt, ...safeRecord } = record;
     return json(safeRecord);

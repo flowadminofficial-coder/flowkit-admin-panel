@@ -4,6 +4,7 @@ import { LogOut, ShieldCheck, UserCheck } from "lucide-react";
 import { FormEvent, ReactNode, useEffect, useState } from "react";
 import {
   AdminSession,
+  changePassword,
   clearToken,
   currentAdminSession,
   loginWithPassword,
@@ -18,6 +19,9 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
+  const [showChangePassword, setShowChangePassword] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -52,6 +56,24 @@ export function AuthGate({ children }: { children: ReactNode }) {
     clearToken();
     setSession(null);
     setPassword("");
+  }
+
+  async function submitPasswordChange(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await changePassword(currentPassword, newPassword);
+      setNotice(result.message || "Password changed.");
+      setCurrentPassword("");
+      setNewPassword("");
+      setShowChangePassword(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to change password.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   if (loading) {
@@ -118,11 +140,31 @@ export function AuthGate({ children }: { children: ReactNode }) {
       <div className="auth-bar">
         <span>{session.email}</span>
         <strong>{session.role === "super_admin" ? "Super admin" : session.role || "Admin"}</strong>
+        <button className="command-button h-8" onClick={() => setShowChangePassword((value) => !value)}>
+          Change password
+        </button>
         <button className="command-button h-8" onClick={logout}>
           <LogOut size={15} />
           Sign out
         </button>
       </div>
+      {showChangePassword && (
+        <div className="auth-password-panel">
+          <form className="grid gap-3" onSubmit={submitPasswordChange}>
+            <label className="grid gap-1 text-sm font-medium text-slate-700">
+              Current password
+              <input className="input" type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} required />
+            </label>
+            <label className="grid gap-1 text-sm font-medium text-slate-700">
+              New password
+              <input className="input" type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} required minLength={8} />
+            </label>
+            {notice ? <div className="auth-success">{notice}</div> : null}
+            {error ? <div className="auth-error">{error}</div> : null}
+            <button className="primary-button" disabled={busy}>Save password</button>
+          </form>
+        </div>
+      )}
       {children}
     </>
   );

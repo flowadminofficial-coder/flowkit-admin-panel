@@ -494,6 +494,7 @@ export default function Home() {
   const [prompt, setPrompt] = useState("cinematic Tokyo rain street");
   const [preferredWorkerId, setPreferredWorkerId] = useState("");
   const [preferredAccountId, setPreferredAccountId] = useState("");
+  const [resetPasswords, setResetPasswords] = useState<Record<string, string>>({});
 
   const selectedGlobalSetting = flowSettings[generationType] || {};
 
@@ -649,6 +650,21 @@ export default function Home() {
     );
   }
 
+  async function resetAdminPassword(email: string) {
+    const password = resetPasswords[email] || "";
+    if (password.length < 8) {
+      setError("Reset password must be at least 8 characters.");
+      return;
+    }
+    await run("Admin password reset", () =>
+      adminApi("/access/reset-password", {
+        method: "POST",
+        body: JSON.stringify({ email, password }),
+      }),
+    );
+    setResetPasswords((current) => ({ ...current, [email]: "" }));
+  }
+
   return (
     <main className="min-h-screen bg-[#f6f7f9] text-slate-950">
       <div className="mx-auto flex min-h-screen w-full max-w-[1500px] flex-col px-4 py-4 sm:px-6 lg:px-8">
@@ -731,16 +747,30 @@ export default function Home() {
                         {user.super_admin ? <span>super admin</span> : <span>{user.role || "viewer"}</span>}
                       </div>
                       {!user.super_admin && (
-                        <div className="mt-3 grid grid-cols-3 gap-2">
-                          <button className="command-button h-9 justify-center" onClick={() => updateAdminAccess(user.email, "approved")} disabled={Boolean(busy)}>
-                            Approve
-                          </button>
-                          <button className="command-button h-9 justify-center" onClick={() => updateAdminAccess(user.email, "pending")} disabled={Boolean(busy)}>
-                            Pending
-                          </button>
-                          <button className="command-button h-9 justify-center text-red-700" onClick={() => updateAdminAccess(user.email, "blocked")} disabled={Boolean(busy)}>
-                            Block
-                          </button>
+                        <div className="mt-3 grid gap-2">
+                          <div className="grid grid-cols-3 gap-2">
+                            <button className="command-button h-9 justify-center" onClick={() => updateAdminAccess(user.email, "approved")} disabled={Boolean(busy)}>
+                              Approve
+                            </button>
+                            <button className="command-button h-9 justify-center" onClick={() => updateAdminAccess(user.email, "pending")} disabled={Boolean(busy)}>
+                              Pending
+                            </button>
+                            <button className="command-button h-9 justify-center text-red-700" onClick={() => updateAdminAccess(user.email, "blocked")} disabled={Boolean(busy)}>
+                              Block
+                            </button>
+                          </div>
+                          <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                            <input
+                              className="input h-9"
+                              type="password"
+                              placeholder="New password"
+                              value={resetPasswords[user.email] || ""}
+                              onChange={(event) => setResetPasswords((current) => ({ ...current, [user.email]: event.target.value }))}
+                            />
+                            <button className="command-button h-9 justify-center" onClick={() => resetAdminPassword(user.email)} disabled={Boolean(busy)}>
+                              Reset
+                            </button>
+                          </div>
                         </div>
                       )}
                     </div>

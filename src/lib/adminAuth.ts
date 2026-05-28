@@ -56,3 +56,18 @@ export async function currentAdminSession() {
   }
   return response.json() as Promise<AdminSession>;
 }
+
+export async function changePassword(currentPassword: string, newPassword: string) {
+  const token = storedToken();
+  if (!token) throw new Error("Not signed in.");
+  const response = await fetch("/api/admin/change-password", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<{ ok: boolean; message: string }>;
+}
