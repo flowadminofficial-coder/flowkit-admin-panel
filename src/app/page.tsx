@@ -239,7 +239,6 @@ type ExtensionPackage = {
 };
 
 const API = "/api/orchestrator";
-const DEFAULT_WORKER_PUBLIC_BASE = process.env.NEXT_PUBLIC_WORKER_PUBLIC_BASE || "";
 const PUBLIC_ADMIN_URL = "https://flowkit-admin-panel.flowadminofficial.workers.dev";
 const PUBLIC_ORCHESTRATOR_URL = process.env.NEXT_PUBLIC_ORCHESTRATOR_PUBLIC_URL || "https://flowkit-global-orchestrator.onrender.com";
 
@@ -361,7 +360,14 @@ function isVideoOutput(job: Job, url: string) {
 }
 
 function outputUrlForBrowser(url: string) {
-  if (url.startsWith("/media/")) return `${DEFAULT_WORKER_PUBLIC_BASE}${url}`;
+  if (url.startsWith("/media/")) {
+    const token = storedToken();
+    return token ? `${url}${url.includes("?") ? "&" : "?"}admin_token=${encodeURIComponent(token)}` : url;
+  }
+  return url;
+}
+
+function outputUrlLabel(url: string) {
   return url;
 }
 
@@ -1448,11 +1454,11 @@ function ApiDocs({ selectedType }: { selectedType: GenerationType }) {
         <div className="rounded-lg border border-slate-200 bg-white p-4">
           <div className="text-sm font-semibold">Output Handling</div>
           <p className="mt-2 text-sm leading-6 text-slate-600">
-            For images, output URLs may be Google Flow image links. For videos, the worker can return `/media/videos/file.mp4`; convert relative URLs to the worker base URL before rendering.
+            For images, output URLs may be Google Flow image links. For videos, the worker can return `/media/videos/file.mp4`; this admin app proxies that path securely through the orchestrator so the browser can play it without exposing API keys.
           </p>
           <pre className="mt-3 max-h-40 overflow-auto rounded-lg bg-slate-950 p-3 text-xs text-slate-100">{`const outputUrl =
   url.startsWith("/media/")
-    ? WORKER_PUBLIC_BASE + url
+    ? ADMIN_OR_API_BASE + url
     : url;`}</pre>
         </div>
       </div>
@@ -1600,7 +1606,7 @@ function JobCard({ job }: { job: Job }) {
             {urls.map((url, index) => (
               <div key={url} className="flex min-w-0 items-center gap-2 rounded-lg bg-slate-50 px-3 py-2">
                 <span className="shrink-0 text-xs font-semibold text-slate-400">#{index + 1}</span>
-                <a className="min-w-0 flex-1 truncate text-sm font-medium text-blue-700 hover:underline" href={outputUrlForBrowser(url)} target="_blank" rel="noreferrer">{outputUrlForBrowser(url)}</a>
+                <a className="min-w-0 flex-1 truncate text-sm font-medium text-blue-700 hover:underline" href={outputUrlForBrowser(url)} target="_blank" rel="noreferrer">{outputUrlLabel(url)}</a>
                 <button className="icon-button shrink-0" type="button" title="Copy output URL" onClick={() => copyText(outputUrlForBrowser(url))}>
                   <Copy size={15} />
                 </button>

@@ -23,7 +23,12 @@ function userKey(email) {
 function tokenFromRequest(request) {
   const authorization = request.headers.get("authorization") || "";
   const match = authorization.match(/^Bearer\s+(.+)$/i);
-  return match?.[1] || null;
+  if (match?.[1]) return match[1];
+  const cookie = request.headers.get("cookie") || "";
+  const cookieMatch = cookie.match(/(?:^|;\s*)flowkit_admin_token=([^;]+)/);
+  if (cookieMatch?.[1]) return decodeURIComponent(cookieMatch[1]);
+  const url = new URL(request.url);
+  return url.searchParams.get("admin_token") || null;
 }
 
 function base64Url(bytes) {
@@ -153,6 +158,38 @@ async function proxyOrchestrator(request, env) {
   });
 }
 
+async function proxyMedia(request, env) {
+  const auth = await requireApprovedAdmin(request, env);
+  if (auth.response) return auth.response;
+
+  const baseUrl = env.ORCHESTRATOR_API_URL || DEFAULT_ORCHESTRATOR_URL;
+  const requestUrl = new URL(request.url);
+  const upstream = new URL(requestUrl.pathname, baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`);
+  upstream.search = requestUrl.search;
+
+  const headers = new Headers();
+  const range = request.headers.get("range");
+  if (range) headers.set("range", range);
+  const accept = request.headers.get("accept");
+  if (accept) headers.set("accept", accept);
+  if (env.ORCHESTRATOR_API_KEY) headers.set("x-api-key", env.ORCHESTRATOR_API_KEY);
+
+  const response = await fetch(upstream.toString(), {
+    method: request.method,
+    headers,
+  });
+  const nextHeaders = new Headers(response.headers);
+  if (requestUrl.pathname.toLowerCase().endsWith(".mp4")) {
+    nextHeaders.set("content-type", "video/mp4");
+    nextHeaders.set("content-disposition", "inline");
+  }
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: nextHeaders,
+  });
+}
+
 async function listAccessRecords(env) {
   if (!env.ADMIN_USERS) return [];
   const entries = await env.ADMIN_USERS.list({ prefix: "user:" });
@@ -271,7 +308,12 @@ async function handleLogin(request, env) {
   } catch (error) {
     return json({ error: `Unable to sign admin session: ${error.message}` }, 500);
   }
-  return json({ token, user });
+  const response = json({ token, user });
+  response.headers.set(
+    "set-cookie",
+    `flowkit_admin_token=${encodeURIComponent(token)}; Path=/; Max-Age=${SESSION_TTL_SECONDS}; Secure; SameSite=Strict`,
+  );
+  return response;
 }
 
 async function handleAdminApi(request, env) {
@@ -367,6 +409,7 @@ export default {
       const url = new URL(request.url);
       if (url.pathname.startsWith("/api/admin")) return await handleAdminApi(request, env);
       if (url.pathname.startsWith("/api/orchestrator")) return await proxyOrchestrator(request, env);
+      if (url.pathname.startsWith("/media/")) return await proxyMedia(request, env);
       return env.ASSETS.fetch(request);
     } catch (error) {
       return json({ error: error.message || "Worker error" }, 500);
